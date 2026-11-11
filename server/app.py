@@ -609,6 +609,35 @@ async def signaling(request):
 
 
 # --------------------------------------------------------------------------
+# App updates
+
+
+def latest_apk(app_dir):
+    """The newest doorbell-<version code>.apk in app_dir, as (code, path)."""
+    try:
+        names = os.listdir(app_dir) if app_dir else []
+    except FileNotFoundError:
+        names = []
+    found = [(int(m[1]), os.path.join(app_dir, m[0])) for m in
+             (re.fullmatch(r"doorbell-(\d+)\.apk", n) for n in names) if m]
+    return max(found, default=None)
+
+
+async def app_version(request):
+    latest = latest_apk(request.app[APP_DIR])
+    if latest is None:
+        return web.json_response({"error": "No app published."}, status=404)
+    return web.json_response({"version": latest[0]})
+
+
+async def app_apk(request):
+    latest = latest_apk(request.app[APP_DIR])
+    if latest is None:
+        return web.json_response({"error": "No app published."}, status=404)
+    return web.FileResponse(latest[1], headers={
+        "Content-Type": "application/vnd.android.package-archive"})
+
+
 # App
 
 CLIENTS = web.AppKey("clients", Clients)
@@ -622,6 +651,7 @@ SESSION = web.AppKey("session", ClientSession)
 LAST_OPEN = web.AppKey("last_open", list)
 OPEN_INTERVAL = web.AppKey("open_interval", float)
 HISTORY = web.AppKey("history", History)
+APP_DIR = web.AppKey("app_dir", str)
 
 
 async def ring_from_visitor(app):
@@ -642,7 +672,7 @@ async def ring_from_visitor(app):
 def make_app(*, sender, ring_secret, clients, access, ha_url, ha_token,
              lock_entity, lock_service="unlock", camera_entity="",
              go2rtc_url, stream, open_interval=3.0, visitor_entity="",
-             visitor_retry=5.0, history=None):
+             visitor_retry=5.0, history=None, app_dir=""):
     app = web.Application(middlewares=[api_auth])
     app[HISTORY] = history if history is not None else History()
     app[SENDER] = sender
@@ -653,6 +683,7 @@ def make_app(*, sender, ring_secret, clients, access, ha_url, ha_token,
     app[STREAM] = stream
     app[LAST_OPEN] = [0.0]
     app[OPEN_INTERVAL] = open_interval
+    app[APP_DIR] = app_dir
 
     async def session_ctx(app):
         session = ClientSession(timeout=ClientTimeout(total=10))
@@ -683,6 +714,8 @@ def make_app(*, sender, ring_secret, clients, access, ha_url, ha_token,
     app.router.add_get("/api/history/{id}/picture", history_picture)
     app.router.add_get("/api/snapshot", snapshot)
     app.router.add_get("/api/ws", signaling)
+    app.router.add_get("/api/app", app_version)
+    app.router.add_get("/api/app/apk", app_apk)
     return app
 
 
@@ -740,6 +773,7 @@ def build(cfg, *, token_provider=None, fcm_endpoint=None):
         open_interval=float(ha.get("open_interval_seconds", 3)),
         visitor_entity=ha.get("visitor", ""),
         history=History(cfg.get("history_dir", "")),
+        app_dir=cfg.get("app_dir", ""),
     )
 
 

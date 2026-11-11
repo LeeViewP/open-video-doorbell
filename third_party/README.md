@@ -11,7 +11,8 @@ Every change is marked `doorbell-call patch`:
   `show_unlock: true`.
 - `CallkitIncomingActivity.kt` + `res/layout/activity_callkit_incoming.xml`:
   the button on the full-screen call. On a locked phone it asks for the
-  phone's own unlock (PIN, fingerprint) before going on.
+  phone's own unlock (PIN, fingerprint) before going on. Answer no longer
+  dismisses the lock screen: the app shows over it during the call.
 - `CallkitNotificationManager.kt`: the same action in the call notification
   (Android 14+ call style), with `setAuthenticationRequired(true)`.
 - `SharedPreferencesUtils.kt`: an accepted call keeps the extra it was

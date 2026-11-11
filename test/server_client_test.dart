@@ -148,4 +148,25 @@ void main() {
       'ws://doorbell.lan:8099/api/ws?kind=view',
     );
   });
+
+  test(
+    'latestAppVersion reads the offered version, null without one',
+    () async {
+      DoorbellServer serving(int status, String body) => DoorbellServer(
+        _settings,
+        client: MockClient((request) async {
+          expect(request.url.path, '/api/app');
+          return http.Response(body, status);
+        }),
+      );
+      expect(
+        await serving(200, '{"version": 26111219}').latestAppVersion(),
+        26111219,
+      );
+      expect(
+        await serving(404, '{"error": "No app published."}').latestAppVersion(),
+        isNull,
+      );
+    },
+  );
 }

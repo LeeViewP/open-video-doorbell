@@ -327,6 +327,28 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
                                     headers=PHONE_HEADERS)
         self.assertEqual(res.status, 404)
 
+    # --- app updates --------------------------------------------------------
+
+    async def test_serves_the_newest_apk_to_phones(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for code, body in ((9, b"old"), (26111219, b"new")):
+                with open(os.path.join(d, f"doorbell-{code}.apk"), "wb") as f:
+                    f.write(body)
+            self.client.server.app[app.APP_DIR] = d
+            res = await self.client.get("/api/app")
+            self.assertEqual(res.status, 401)
+            res = await self.client.get("/api/app", headers=PHONE_HEADERS)
+            self.assertEqual(await res.json(), {"version": 26111219})
+            res = await self.client.get("/api/app/apk", headers=PHONE_HEADERS)
+            self.assertEqual(await res.read(), b"new")
+            self.assertEqual(res.headers["Content-Type"],
+                             "application/vnd.android.package-archive")
+
+    async def test_no_app_published(self):
+        res = await self.client.get("/api/app", headers=PHONE_HEADERS)
+        self.assertEqual(res.status, 404)
+
     # --- picture and video --------------------------------------------------
 
     async def test_snapshot_from_go2rtc(self):

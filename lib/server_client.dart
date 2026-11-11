@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -185,6 +186,43 @@ class DoorbellServer {
   /// This phone answered ring [ringId]: the server stops it on the others.
   Future<void> answered(String ringId) async {
     await _send('POST', '/api/answered', {'ring_id': ringId});
+  }
+
+  /// The version code of the app the server offers, or null if none.
+  Future<int?> latestAppVersion() async {
+    try {
+      final res = await _send('GET', '/api/app');
+      final version = (jsonDecode(res.body) as Map<String, dynamic>)['version'];
+      return version is int ? version : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Saves the app the server offers to [file].
+  Future<void> downloadApp(
+    File file,
+    void Function(double done) onProgress,
+  ) async {
+    final request = http.Request('GET', uri('/api/app/apk'))
+      ..followRedirects = false
+      ..headers.addAll(settings.authHeaders);
+    final res = await _http.send(request);
+    if (res.statusCode != 200) {
+      throw ServerException('The server answered ${res.statusCode}.');
+    }
+    final total = res.contentLength ?? 0;
+    var received = 0;
+    final sink = file.openWrite();
+    try {
+      await for (final chunk in res.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0) onProgress(received / total);
+      }
+    } finally {
+      await sink.close();
+    }
   }
 
   /// The doorbell's current picture, or null if it could not be fetched.

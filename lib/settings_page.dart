@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_update.dart';
 import 'server_client.dart';
 import 'settings.dart';
 
@@ -17,6 +18,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _cfSecret = TextEditingController();
   bool _loaded = false;
   bool _showSecret = false;
+  String? _version;
 
   /// Result of the last connection test; null while none ran.
   ({bool ok, String text})? _status;
@@ -30,8 +32,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _load() async {
     final s = await _store.load();
+    final version = await appVersion();
     if (!mounted) return;
     setState(() {
+      _version = version;
       _server.text = s.serverUrl;
       _cfId.text = s.cfClientId;
       _cfSecret.text = s.cfClientSecret;
@@ -139,6 +143,17 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (_status case final s?) _StatusBanner(s.ok, s.text),
                   ],
                 ),
+                if (_version case final v?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Text(
+                      'Version $v',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                  ),
               ],
             ),
       bottomNavigationBar: !_loaded

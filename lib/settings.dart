@@ -82,19 +82,23 @@ class SettingsStore {
 
   /// Settings baked into a build for one phone, so it works on first start:
   /// `flutter build apk --dart-define-from-file=phone.json` with the keys
-  /// below. Used until the phone saves its own.
+  /// below. Saved on the phone then, so updates built without them keep it.
   static const builtIn = Settings(
     serverUrl: String.fromEnvironment('DOORBELL_SERVER_URL'),
     cfClientId: String.fromEnvironment('DOORBELL_CF_CLIENT_ID'),
     cfClientSecret: String.fromEnvironment('DOORBELL_CF_CLIENT_SECRET'),
   );
 
-  Future<Settings> load() async {
+  Future<Settings> load([Settings firstStart = builtIn]) async {
+    final serverUrl = await _storage.read(key: _kServer);
+    if (serverUrl == null) {
+      if (firstStart.isConfigured) await save(firstStart);
+      return firstStart;
+    }
     return Settings(
-      serverUrl: await _storage.read(key: _kServer) ?? builtIn.serverUrl,
-      cfClientId: await _storage.read(key: _kCfId) ?? builtIn.cfClientId,
-      cfClientSecret:
-          await _storage.read(key: _kCfSecret) ?? builtIn.cfClientSecret,
+      serverUrl: serverUrl,
+      cfClientId: await _storage.read(key: _kCfId) ?? '',
+      cfClientSecret: await _storage.read(key: _kCfSecret) ?? '',
     );
   }
 

@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'answer_signal.dart';
+import 'app_update.dart';
 import 'history_page.dart';
 import 'hold_button.dart';
 import 'live_view.dart';
+import 'lock_screen.dart';
 import 'server_client.dart';
 import 'settings.dart';
 import 'settings_page.dart';
@@ -32,6 +34,8 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
 
   /// The last few rings, shown under the lock's state.
   List<HistoryEntry> _recent = const [];
+  int? _update;
+  double? _updateProgress;
   bool _busy = false;
   bool _loaded = false;
 
@@ -100,16 +104,18 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
     // The still is the same picture the ringing call showed: the server's
     // snapshot, shown while the video connects.
     final server = DoorbellServer(settings);
-    final (lock, still, recent) = await (
+    final (lock, still, recent, update) = await (
       server.lock(),
       server.snapshot(),
       _recentRings(server),
+      availableUpdate(server),
     ).wait;
     if (!mounted) return;
     setState(() {
       _lock = lock ?? _lock;
       _still = still ?? _still;
       _recent = recent ?? _recent;
+      _update = update;
     });
   }
 
@@ -134,6 +140,7 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
   }
 
   Future<void> _open() async {
+    if (!await unlockPhone() || !mounted) return;
     setState(() => _busy = true);
     String? error;
     try {
@@ -168,6 +175,7 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openSettings() async {
+    if (!await unlockPhone() || !mounted) return;
     await Navigator.of(
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
@@ -175,6 +183,7 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openHistory() async {
+    if (!await unlockPhone() || !mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => HistoryPage(settings: _settings)),
     );
@@ -225,14 +234,50 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
   /// Edge to edge and 4:3 like the doorbell's picture.
   Widget _video() => AspectRatio(aspectRatio: 4 / 3, child: _preview());
 
-  /// Which lock and in what state, under the video.
+  /// Which lock and in what state, under the video, and a newer app if the
+  /// server has one.
   Widget _status() {
     final lock = _lock;
-    if (lock == null) return const SizedBox(height: 56);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      child: _LockStatus(lock),
+      child: Row(
+        children: [
+          Expanded(
+            child: lock == null
+                ? const SizedBox(height: 24)
+                : _LockStatus(lock),
+          ),
+          if (_update != null) _updateButton(),
+        ],
+      ),
     );
+  }
+
+  Widget _updateButton() {
+    final progress = _updateProgress;
+    return FilledButton.tonalIcon(
+      onPressed: progress == null ? _installUpdate : null,
+      icon: progress == null
+          ? const Icon(Icons.system_update)
+          : SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, value: progress),
+            ),
+      label: Text(progress == null ? 'Update' : '${(progress * 100).round()}%'),
+    );
+  }
+
+  Future<void> _installUpdate() async {
+    if (!await unlockPhone() || !mounted) return;
+    setState(() => _updateProgress = 0);
+    try {
+      await installUpdate(DoorbellServer(_settings), (done) {
+        if (mounted) setState(() => _updateProgress = done);
+      });
+    } catch (e) {
+      _say('Update failed: $e');
+    }
+    if (mounted) setState(() => _updateProgress = null);
   }
 
   /// Who rang lately, at a glance: up to three pictures with the time and

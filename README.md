@@ -38,6 +38,8 @@ Python (aiohttp), one container. Endpoints:
   stop ringing ("Answered by phone1").
 - `GET /api/history`, `GET /api/history/<id>/picture`: the last 100 rings
   with the picture taken at each, who answered and who opened.
+- `GET /api/app`, `GET /api/app/apk`: the newest app in `app_dir`, for
+  the app's own updates.
 
 Who may use `/api`: the `phones` in the config, each with its own
 Cloudflare Access service token. Through Cloudflare the server checks the
@@ -54,6 +56,7 @@ an edit and a restart.
 |---|---|
 | `port` | listen port, default 8099 |
 | `history_dir` | ring history with its pictures, writable; empty: in memory only |
+| `app_dir` | optional: where the APKs the phones update from are, named `doorbell-<version code>.apk` |
 | `push.fcm_project_id`, `push.firebase_key` | Firebase project and the path of its service-account key |
 | `push.ring_secret` | `X-Secret` for `POST /ring`, 16+ characters |
 | `push.topic`, `push.debounce_seconds` | optional: `doorbell`; a second press within 10 s is ignored |
@@ -103,13 +106,36 @@ app asks for them in Settings. Details and the first run on each phone:
 button, the live preview and a few fixes (see `third_party/README.md`).
 `tool/render_icon.py` renders the launcher icon's PNGs from its vector.
 
+### Updates
+
+The app updates itself from the server: when `app_dir` holds a newer
+`doorbell-<version code>.apk` than the installed one, the main page shows
+**Update**; it downloads the APK and hands it to Android's installer. The
+first time Android asks to allow installs from Doorbell and to confirm; on
+Android 12+ later updates go through without asking. Samsung's Auto Blocker
+refuses them: turn it off for the update.
+
+To publish one, build it without per-phone settings (the phones keep theirs)
+and with a growing version code, signed with the same key as the installed
+app:
+
+```sh
+flutter build apk --release --target-platform android-arm64 \n  --build-number=<n> --build-name=<date>
+cp build/app/outputs/flutter-apk/app-release.apk <app_dir>/doorbell-<n>.apk
+```
+
+A date like `yyDDDHHmm` (year, day of the year, time) makes a good `<n>`;
+`<date>`, e.g. `2026.11.11-1924`, is what Settings shows as the version.
+
 ## Choices and limits
 
 - **Data-only push.** No `notification` block, or the system would show it
   itself and the call screen would never appear. The call shows how long the
   push took ("push 0.8 s").
-- **Unlock from the call screen** asks for the phone's own unlock (PIN,
-  fingerprint) first, on the full-screen call and in the notification.
+- **Answering does not need the phone unlocked**, like any call: the app
+  shows over the lock screen for that call only. Opening the door, the
+  history and Settings ask for the phone's own unlock (PIN, fingerprint)
+  first, on the call screen, in the notification and in the app.
 - **Live video is WebRTC from go2rtc**, the stream in the config: it needs
   the camera's two-way audio and audio WebRTC plays (Opus; a stream with
   only AAC has no sound). Until the first frame arrives, the snapshot is
