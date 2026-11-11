@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher icon: a video doorbell (camera lens above a green button).
+     108dp adaptive-icon canvas; everything sits in the 66dp safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,26L56,26A12,12 0,0 1,68 38L68,70A12,12 0,0 1,56 82L52,82A12,12 0,0 1,40 70L40,38A12,12 0,0 1,52 26Z" />
+    <!-- camera -->
+    <path
+        android:fillColor="#1E2A23"
+        android:pathData="M45,41a9,9 0,1 0,18 0a9,9 0,1 0,-18 0Z" />
+    <path
+        android:fillColor="#5C7A6A"
+        android:pathData="M50,41a4,4 0,1 0,8 0a4,4 0,1 0,-8 0Z" />
+    <!-- button -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M47,67a7,7 0,1 0,14 0a7,7 0,1 0,-14 0Z" />
+</vector>

@@ -1,0 +1,4 @@
+aiohttp>=3.10,<4
+PyJWT[crypto]>=2.9,<3
+google-auth>=2.30,<3
+requests>=2.32,<3

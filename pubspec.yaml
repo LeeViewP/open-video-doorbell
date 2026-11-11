@@ -1,0 +1,31 @@
+name: doorbell_call
+description: Rings like an incoming call when the doorbell is pressed and opens the door lock through Home Assistant.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.9.0
+  # Color.withValues (3.27) and DropdownButtonFormField.initialValue (3.35).
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^5.1.0
+  firebase_messaging: ^17.0.1
+  # 3.1.6 with an "Unlock" button on the call screen: see third_party/README.md.
+  flutter_callkit_incoming:
+    path: third_party/flutter_callkit_incoming
+  flutter_secure_storage: ^11.2.0
+  flutter_webrtc: ^1.6.3
+  http: ^1.2.2
+  uuid: ^4.5.1
+  dynamic_color: 1.8.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

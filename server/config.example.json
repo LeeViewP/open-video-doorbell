@@ -1,0 +1,34 @@
+{
+  "history_dir": "/var/lib/doorbell",
+  "push": {
+    "fcm_project_id": "your-firebase-project-id",
+    "firebase_key": "/srv/doorbell/firebase-key.json",
+    "ring_secret": "change-me-to-a-long-random-string"
+  },
+  "home_assistant": {
+    "url": "http://homeassistant.lan:8123",
+    "token": "...",
+    "lock": "lock.front_door",
+    "visitor": "binary_sensor.doorbell_visitor"
+  },
+  "go2rtc": {
+    "url": "http://go2rtc:1984",
+    "stream": "doorbell_main"
+  },
+  "cloudflare": {
+    "team_domain": "your-team.cloudflareaccess.com",
+    "aud": "the-access-application-aud-tag"
+  },
+  "phones": [
+    {
+      "name": "phone1",
+      "client_id": "first-phone-client-id.access",
+      "client_secret": "..."
+    },
+    {
+      "name": "phone2",
+      "client_id": "second-phone-client-id.access",
+      "client_secret": "..."
+    }
+  ]
+}

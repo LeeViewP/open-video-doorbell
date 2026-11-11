@@ -1,0 +1,27 @@
+# Example for a Docker host on the LAN. Next to this file (never in git):
+#   config.json        every setting and secret (see config.example.json)
+#   firebase-key.json  Firebase service-account key
+# Both must be readable by the container's `nobody` user: chmod 644.
+# A settings change: edit config.json, then docker restart doorbell-server.
+services:
+  doorbell-server:
+    build: .
+    container_name: doorbell-server
+    restart: unless-stopped
+    environment:
+      CONFIG_FILE: /srv/doorbell/config.json
+    volumes:
+      - ./config.json:/srv/doorbell/config.json:ro
+      - ./firebase-key.json:/srv/doorbell/firebase-key.json:ro
+      # ring history with pictures; must be writable by nobody
+      - history:/var/lib/doorbell
+    ports:
+      - "8099:8099"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  history:
