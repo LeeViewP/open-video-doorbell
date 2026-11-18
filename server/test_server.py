@@ -103,8 +103,14 @@ def fake_go2rtc():
 
 def fake_fcm(sent):
     async def send(request):
+        body = await request.json()
         sent.append({"auth": request.headers.get("Authorization"),
-                     "json": await request.json()})
+                     "json": body})
+        if body["message"].get("fid") == "gone":
+            return web.json_response(
+                {"error": {"status": "NOT_FOUND",
+                           "details": [{"errorCode": "UNREGISTERED"}]}},
+                status=404)
         return web.json_response({"name": "projects/p/messages/1"})
 
     fcm = web.Application()
@@ -122,8 +128,12 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
         for s in self.servers:
             await s.start_server()
         ha, go, fcm = self.servers
+        self.devices = app.Devices()
+        self.devices.set("phone1", "token-1")
+        self.devices.set("phone2", "token-2")
         self.sender = app.Sender(
-            "p", token_provider=lambda: "fake-access", debounce_seconds=0.5,
+            "p", token_provider=lambda: "fake-access", devices=self.devices,
+            debounce_seconds=0.5,
             endpoint=str(fcm.make_url("/v1/projects/p/messages:send")))
         self.client = await self.make_client()
 
@@ -149,13 +159,15 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
 
     # --- /ring --------------------------------------------------------------
 
-    async def test_ring_sends_high_priority_data_message_to_topic(self):
+    async def test_ring_sends_high_priority_data_message_to_each_phone(self):
         res = await self.client.post("/ring", headers={"X-Secret": SECRET})
         self.assertEqual((res.status, await res.text()), (200, "rang"))
-        self.assertEqual(len(self.fcm_sent), 1)
+        self.assertEqual(
+            sorted(m["json"]["message"]["fid"] for m in self.fcm_sent),
+            ["token-1", "token-2"])
         self.assertEqual(self.fcm_sent[0]["auth"], "Bearer fake-access")
         message = self.fcm_sent[0]["json"]["message"]
-        self.assertEqual(message["topic"], "doorbell")
+        self.assertNotIn("topic", message)
         self.assertEqual(message["data"]["type"], "doorbell")
         self.assertEqual(message["android"]["priority"], "HIGH")
         sent_at = int(message["data"]["sent_at"])
@@ -181,7 +193,7 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
         await self.client.post("/ring", headers={"X-Secret": SECRET})
         res = await self.client.post("/ring", headers={"X-Secret": SECRET})
         self.assertIn("ignored", await res.text())
-        self.assertEqual(len(self.fcm_sent), 1)
+        self.assertEqual(len(self.fcm_sent), 2)  # one ring, two phones
 
     async def test_bad_ring_bodies(self):
         for body, text in ((b"nope", "invalid json"),
@@ -278,12 +290,38 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
         res = await self.client.post("/api/answered", headers=PHONE_HEADERS,
                                      json={"ring_id": "abc123"})
         self.assertEqual(await res.json(), {"ok": True})
+        self.assertEqual(len(self.fcm_sent), 1)
         message = self.fcm_sent[0]["json"]["message"]
-        self.assertEqual(message["topic"], "doorbell")
+        self.assertEqual(message["fid"], "token-2")
         self.assertEqual(message["data"], {
             "type": "doorbell_answered", "ring_id": "abc123",
             "by": "phone1"})
         self.assertEqual(message["android"]["priority"], "HIGH")
+
+    async def test_a_phone_registers_where_its_pushes_go(self):
+        res = await self.client.post("/api/push", json={"fid": "x"})
+        self.assertEqual(res.status, 401)
+        res = await self.client.post("/api/push", headers=PHONE_HEADERS,
+                                     json={})
+        self.assertEqual(res.status, 400)
+        res = await self.client.post("/api/push", headers=PHONE_HEADERS,
+                                     json={"fid": "token-new"})
+        self.assertEqual(await res.json(), {"ok": True})
+        self.assertIn(("phone1", "token-new"), self.devices.items())
+
+    async def test_a_gone_phone_is_dropped_and_the_rest_still_ring(self):
+        self.devices.set("phone2", "gone")
+        res = await self.client.post("/ring", headers={"X-Secret": SECRET})
+        self.assertEqual(await res.text(), "rang")
+        self.assertEqual(self.devices.items(), [("phone1", "token-1")])
+
+    async def test_the_topic_too_while_phones_move_to_tokens(self):
+        self.sender.topic = "doorbell"
+        await self.client.post("/ring", headers={"X-Secret": SECRET})
+        targets = sorted(m["json"]["message"].get("fid")
+                         or "topic:" + m["json"]["message"]["topic"]
+                         for m in self.fcm_sent)
+        self.assertEqual(targets, ["token-1", "token-2", "topic:doorbell"])
 
     async def test_answered_needs_a_phone_and_a_ring_id(self):
         res = await self.client.post("/api/answered", json={"ring_id": "x"})
@@ -427,8 +465,11 @@ class VisitorWatchTest(unittest.IsolatedAsyncioTestCase):
         await self.fcm.close()
 
     async def run_server(self, token="ha-token", seconds=0.6):
+        devices = app.Devices()
+        devices.set("phone1", "token-1")
         sender = app.Sender(
-            "p", token_provider=lambda: "fake-access", debounce_seconds=0,
+            "p", token_provider=lambda: "fake-access", devices=devices,
+            debounce_seconds=0,
             endpoint=str(self.fcm.make_url("/v1/projects/p/messages:send")))
         server_app = app.make_app(
             sender=sender, ring_secret=SECRET, clients=app.Clients([PHONE]),
@@ -530,6 +571,22 @@ class ClientsTest(unittest.TestCase):
     def test_entries_need_all_fields(self):
         with self.assertRaises(ValueError):
             app.Clients([{"name": "x", "client_id": "y"}])
+
+    def test_names_are_unique(self):
+        with self.assertRaisesRegex(ValueError, "name phone1"):
+            app.Clients([PHONE, dict(PHONE, client_id="other.access")])
+
+
+class DevicesTest(unittest.TestCase):
+    def test_kept_on_disk_for_known_phones_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "devices.json")
+            devices = app.Devices(path)
+            devices.set("phone1", "token-1")
+            devices.set("removed", "token-2")
+            again = app.Devices(path, names={"phone1"})
+            self.assertEqual(again.items(), [("phone1", "token-1")])
 
     def test_go2rtc_urls(self):
         self.assertEqual(

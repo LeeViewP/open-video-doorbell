@@ -9,7 +9,7 @@ Assistant. Built because the Reolink app has no button for the lock.
 doorbell press
   -> Home Assistant: binary_sensor.<doorbell>_visitor turns on
   -> server/ (this repo, on the LAN) sees it over HA's websocket
-  -> FCM data message to the `doorbell` topic
+  -> FCM data message to each registered phone
   -> phones ring: full-screen call with a snapshot of the door,
      Dismiss / Unlock / Answer (also on the lock screen)
   -> Answer: live video + microphone on (two-way audio)
@@ -34,6 +34,9 @@ Python (aiohttp), one container. Endpoints:
 - `GET /api/state`, `POST /api/open`, `GET /api/snapshot`, `GET /api/ws`
   (go2rtc's WebRTC signaling, relayed for the configured stream only; the
   media goes straight between the phone and go2rtc's port 8555).
+- `POST /api/push` `{"fid"}`: where this phone's pushes go (its Firebase
+  Installation ID; the app sends it at every start). Pushes go to the phones
+  in `phones` only, so a removed phone stops ringing too.
 - `POST /api/answered`: this phone took the ring; the others get a push to
   stop ringing ("Answered by phone1").
 - `GET /api/history`, `GET /api/history/<id>/picture`: the last 100 rings
@@ -59,7 +62,8 @@ an edit and a restart.
 | `app_dir` | optional: where the APKs the phones update from are, named `doorbell-<version code>.apk` |
 | `push.fcm_project_id`, `push.firebase_key` | Firebase project and the path of its service-account key |
 | `push.ring_secret` | `X-Secret` for `POST /ring`, 16+ characters |
-| `push.topic`, `push.debounce_seconds` | optional: `doorbell`; a second press within 10 s is ignored |
+| `push.debounce_seconds` | optional: a second press within 10 s is ignored |
+| `push.topic` | optional: also send to this FCM topic (only for phones on app versions from before per-phone pushes) |
 | `home_assistant.url`, `.token` | Home Assistant and a non-admin, local-only user's token (it reads states, calls the lock, subscribes to state changes) |
 | `home_assistant.lock` | the lock entity |
 | `home_assistant.lock_service` | optional: `unlock` (default) or `open` for a latch |

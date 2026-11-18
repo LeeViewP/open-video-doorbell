@@ -3,6 +3,7 @@ See README.md.
 """
 
 import asyncio
+import concurrent.futures
 import hmac
 import json
 import logging
@@ -63,9 +64,52 @@ def post_json(url, token, payload, timeout=10):
         return err.code, err.read().decode()
 
 
+class Devices:
+    """Each phone's Firebase Installation ID (FID), by phone name: where its
+    pushes go. Kept in a file, so a restart does not wait for the phones to
+    register again."""
+
+    def __init__(self, path="", names=None):
+        self._path = path
+        self._lock = threading.Lock()
+        self._tokens = {}
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                self._tokens = json.load(f)
+        if names is not None:
+            self._tokens = {n: t for n, t in self._tokens.items()
+                            if n in names}
+
+    def set(self, name, token):
+        with self._lock:
+            if self._tokens.get(name) == token:
+                return
+            self._tokens[name] = token
+            self._save()
+        log.info("%s registered for pushes", name)
+
+    def remove(self, name):
+        with self._lock:
+            if self._tokens.pop(name, None) is not None:
+                self._save()
+
+    def items(self):
+        with self._lock:
+            return list(self._tokens.items())
+
+    def _save(self):
+        if not self._path:
+            return
+        tmp = self._path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._tokens, f)
+        os.replace(tmp, self._path)
+
+
 class Sender:
-    def __init__(self, project_id, token_provider, topic="doorbell",
+    def __init__(self, project_id, token_provider, devices=None, topic="",
                  debounce_seconds=10.0, endpoint=None):
+        self.devices = devices if devices is not None else Devices()
         self.topic = topic
         self.debounce_seconds = debounce_seconds
         self.endpoint = endpoint or (
@@ -74,22 +118,54 @@ class Sender:
         self._token = token_provider
         self._lock = threading.Lock()
         self._last_ring = 0.0
+        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         # Of the last ring that went out; the history files it under this.
         self.last_ring_id = ""
 
-    def _message(self, data):
+    @staticmethod
+    def _message(data, target):
         # Data-only message: a notification block would be shown by the system
         # and never reach the app's handler, so no call screen could appear.
         return {
             "message": {
-                "topic": self.topic,
+                **target,
                 "data": data,
                 "android": {"priority": "HIGH", "ttl": "30s"},
             }
         }
 
+    def _send(self, data, skip=""):
+        """Sends [data] to every registered phone but [skip], at once, and to
+        the topic if one is set. Returns (http_status, text): a success if any
+        send went through. Blocking."""
+        targets = [(name, {"fid": fid})
+                   for name, fid in self.devices.items() if name != skip]
+        if self.topic:
+            targets.append(("", {"topic": self.topic}))
+        if not targets:
+            return 503, "no phone has registered for pushes"
+        access = self._token()
+
+        def send(target):
+            name, to = target
+            status, text = post_json(self.endpoint, access,
+                                     self._message(data, to))
+            if name and status in (400, 404) and (
+                    "UNREGISTERED" in text or "INVALID_ARGUMENT" in text):
+                log.warning("dropping the push address of %s: %s",
+                            name, status)
+                self.devices.remove(name)
+            elif status >= 300:
+                log.error("FCM answered %s for %s: %s",
+                          status, name or "the topic", text)
+            return status, text
+
+        results = list(self._pool.map(send, targets))
+        sent = [r for r in results if r[0] < 300]
+        return sent[0] if sent else results[-1]
+
     def payload(self, title, body, ring_id=""):
-        return self._message({
+        return {
             "type": "doorbell",
             "title": title,
             "body": body,
@@ -97,13 +173,14 @@ class Sender:
             "ring_id": ring_id,
             # Unix ms; the app shows how long the push took to arrive.
             "sent_at": str(int(time.time() * 1000)),
-        })
+        }
 
     def answered(self, ring_id, by):
-        """Tells every phone that [by] answered ring [ring_id], so the others
+        """Tells the other phones that [by] answered ring [ring_id], so they
         stop ringing. Returns (http_status, text). Blocking."""
-        return post_json(self.endpoint, self._token(), self._message(
-            {"type": "doorbell_answered", "ring_id": ring_id, "by": by}))
+        return self._send(
+            {"type": "doorbell_answered", "ring_id": ring_id, "by": by},
+            skip=by)
 
     def ring(self, title="Doorbell", body="Someone is at the door"):
         """Returns (http_status, text). 429 when debounced. Blocking."""
@@ -114,9 +191,7 @@ class Sender:
             self._last_ring = now
         ring_id = uuid.uuid4().hex
         try:
-            status, text = post_json(
-                self.endpoint, self._token(),
-                self.payload(title, body, ring_id))
+            status, text = self._send(self.payload(title, body, ring_id))
         except Exception:
             with self._lock:
                 self._last_ring = 0.0
@@ -249,10 +324,15 @@ class Clients:
                     "each client needs name, client_id and client_secret")
             if e["client_id"] in self._by_id:
                 raise ValueError(f"client_id of {e['name']} is used twice")
+            if e["name"] in self.names():
+                raise ValueError(f"the name {e['name']} is used twice")
             self._by_id[e["client_id"]] = e
 
     def __len__(self):
         return len(self._by_id)
+
+    def names(self):
+        return {e["name"] for e in self._by_id.values()}
 
     def by_id(self, client_id):
         e = self._by_id.get(client_id)
@@ -546,6 +626,18 @@ async def answered(request):
     return web.json_response({"ok": True})
 
 
+async def push_address(request):
+    """This phone's Firebase Installation ID {"fid"}: where its pushes go."""
+    try:
+        fid = (await request.json())["fid"]
+    except (ValueError, KeyError, TypeError):
+        fid = None
+    if not isinstance(fid, str) or not 0 < len(fid) <= 4096:
+        return web.json_response({"error": "fid missing."}, status=400)
+    request.app[SENDER].devices.set(request[WHO], fid)
+    return web.json_response({"ok": True})
+
+
 async def fetch_snapshot(app):
     """The doorbell's picture now: Home Assistant's camera when set, else a
     go2rtc frame. Raises UpstreamError or the client's errors."""
@@ -710,6 +802,7 @@ def make_app(*, sender, ring_secret, clients, access, ha_url, ha_token,
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/open", open_door)
     app.router.add_post("/api/answered", answered)
+    app.router.add_post("/api/push", push_address)
     app.router.add_get("/api/history", history_list)
     app.router.add_get("/api/history/{id}/picture", history_picture)
     app.router.add_get("/api/snapshot", snapshot)
@@ -754,11 +847,16 @@ def build(cfg, *, token_provider=None, fcm_endpoint=None):
     if access is None:
         log.warning("cloudflare.team_domain/aud not set: only the service "
                     "token headers are checked")
+    history_dir = cfg.get("history_dir", "")
+    devices = Devices(
+        os.path.join(history_dir, "devices.json") if history_dir else "",
+        names=clients.names())
     sender = Sender(
         project_id=need("push", "fcm_project_id"),
         token_provider=token_provider or google_token_provider(
             need("push", "firebase_key")),
-        topic=push.get("topic", "doorbell"),
+        devices=devices,
+        topic=push.get("topic", ""),
         debounce_seconds=float(push.get("debounce_seconds", 10)),
         endpoint=fcm_endpoint,
     )
@@ -772,7 +870,7 @@ def build(cfg, *, token_provider=None, fcm_endpoint=None):
         go2rtc_url=need("go2rtc", "url"), stream=need("go2rtc", "stream"),
         open_interval=float(ha.get("open_interval_seconds", 3)),
         visitor_entity=ha.get("visitor", ""),
-        history=History(cfg.get("history_dir", "")),
+        history=History(history_dir),
         app_dir=cfg.get("app_dir", ""),
     )
 

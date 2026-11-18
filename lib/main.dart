@@ -59,7 +59,7 @@ Future<void> _startup() async {
   } catch (e) {
     debugPrint('Could not read the active calls: $e');
   }
-  // Network-dependent (topic subscription) and may show dialogs; a failure
+  // Network-dependent (push registration) and may show dialogs; a failure
   // here must not keep the app from opening the door.
   try {
     await initPush();

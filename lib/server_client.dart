@@ -183,6 +183,11 @@ class DoorbellServer {
     await _send('POST', '/api/open');
   }
 
+  /// Where this phone's pushes go: its Firebase Installation ID.
+  Future<void> registerForPush(String fid) async {
+    await _send('POST', '/api/push', {'fid': fid});
+  }
+
   /// This phone answered ring [ringId]: the server stops it on the others.
   Future<void> answered(String ringId) async {
     await _send('POST', '/api/answered', {'ring_id': ringId});

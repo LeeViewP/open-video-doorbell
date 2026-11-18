@@ -8,6 +8,7 @@ import 'app_update.dart';
 import 'history_page.dart';
 import 'hold_button.dart';
 import 'live_view.dart';
+import 'push.dart';
 import 'lock_screen.dart';
 import 'server_client.dart';
 import 'settings.dart';
@@ -101,6 +102,7 @@ class _DoorPageState extends State<DoorPage> with WidgetsBindingObserver {
       _loaded = true;
     });
     _onUnlock();
+    registerForPush().catchError((Object _) {});
     // The still is the same picture the ringing call showed: the server's
     // snapshot, shown while the video connects.
     final server = DoorbellServer(settings);
